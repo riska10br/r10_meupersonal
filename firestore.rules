@@ -1,0 +1,107 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { 
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    function isAdmAcademia() { 
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'adm_academia';
+    }
+    function isPersonal() { 
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'personal';
+    }
+    
+    function existing() { return resource.data; }
+    function incoming() { return request.resource.data; }
+    
+    function isValidId(id) { 
+        return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    match /users/{userId} {
+      function isUserValid(data) {
+        return data.keys().hasAll(['role', 'name', 'email', 'createdAt']) &&
+               data.role in ['admin', 'adm_academia', 'personal', 'aluno'] &&
+               data.name is string && data.name.size() <= 100 &&
+               data.email is string && data.email.size() <= 100 &&
+               data.createdAt is timestamp;
+      }
+
+      allow get: if isSignedIn() && isValidId(userId) && (
+        isAdmin() || 
+        isAdmAcademia() ||
+        request.auth.uid == userId || 
+        (existing().role == 'aluno' && existing().get('personalId', '') == request.auth.uid)
+      );
+      
+      allow list: if isSignedIn();
+
+      // Allow admin creation or bootstrap of demo accounts
+      allow create: if isSignedIn() && isValidId(userId) && isUserValid(incoming()) && (
+        isAdmin() || 
+        isAdmAcademia() ||
+        isPersonal() ||
+        (request.auth.uid == userId && (
+          (request.auth.token.email == 'admin@admin.com' && incoming().role == 'admin') ||
+          (request.auth.token.email == 'gestor@gympro.com' && incoming().role == 'adm_academia') ||
+          (request.auth.token.email == 'personal@gympro.com' && incoming().role == 'personal') ||
+          (request.auth.token.email == 'alunodemo@gympro.com' && incoming().role == 'aluno')
+        ))
+      );
+      
+      allow update: if isSignedIn() && isValidId(userId) && (
+        isAdmin() ||
+        isAdmAcademia() ||
+        isPersonal() ||
+        request.auth.uid == userId
+      );
+      
+      allow delete: if isSignedIn();
+    }
+
+    match /students/{studentId} {
+      function isStudentPersonal() {
+        return get(/databases/$(database)/documents/users/$(studentId)).data.personalId == request.auth.uid;
+      }
+      function isStudentInAcademia() {
+        return get(/databases/$(database)/documents/users/$(studentId)).data.academiaId == request.auth.uid;
+      }
+
+      allow get: if isSignedIn() && isValidId(studentId) && (isAdmin() || request.auth.uid == studentId || isStudentPersonal() || isStudentInAcademia() || isAdmAcademia());
+      
+      allow list: if isSignedIn();
+
+      // We allow Admin, Academia, and Personal to create/update. 
+      allow create: if isSignedIn() && isValidId(studentId) && (isAdmin() || isStudentPersonal() || isStudentInAcademia() || isAdmAcademia());
+      
+      allow update: if isSignedIn() && isValidId(studentId) && (
+        isAdmin() || 
+        isAdmAcademia() ||
+        isStudentPersonal() || 
+        (request.auth.uid == studentId && incoming().diff(existing()).affectedKeys().hasOnly(['progress', 'weight', 'height', 'avatarUrl']))
+      );
+      
+      allow delete: if isSignedIn() && (isAdmin() || isAdmAcademia() || isStudentPersonal());
+    }
+    match /workoutLogs/{logId} {
+      allow get, list: if isSignedIn() && (isAdmin() || request.auth.uid == resource.data.studentId);
+      allow create: if isSignedIn() && incoming().studentId == request.auth.uid;
+      allow update: if isSignedIn() && existing().studentId == request.auth.uid;
+      allow delete: if isSignedIn() && existing().studentId == request.auth.uid;
+    }
+    
+    // Add generic admin access to other tables for reset
+    match /routines/{docId} { allow read, write: if isAdmin() || (isSignedIn() && existing().studentId == request.auth.uid); }
+    match /assessments/{docId} { allow read, write: if isAdmin(); }
+    match /faturas/{docId} { allow read, write: if isAdmin(); }
+    match /pagamentos/{docId} { allow read, write: if isAdmin(); }
+    match /academias/{docId} { allow read, write: if isAdmin(); }
+    match /personais/{docId} { allow read, write: if isAdmin(); }
+    match /assinaturas/{docId} { allow read, write: if isAdmin(); }
+  }
+}

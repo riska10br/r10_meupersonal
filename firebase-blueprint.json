@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with RBAC role",
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["admin", "personal", "aluno"]
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "personalId": {
+          "type": "string",
+          "description": "For alunos: ID of their personal trainer"
+        },
+        "gymId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["role", "name", "email", "createdAt"]
+    },
+    "StudentData": {
+      "title": "StudentData",
+      "description": "Additional data for an Aluno (assessments, plans)",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "weight": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        },
+        "goals": {
+          "type": "array"
+        },
+        "level": {
+          "type": "string"
+        },
+        "sedentaryLevel": {
+          "type": "string"
+        },
+        "weeklyPlan": {
+          "type": "object"
+        },
+        "nutritionPlan": {
+          "type": "object"
+        },
+        "yogaPlan": {
+          "type": "object"
+        },
+        "sportsPlan": {
+          "type": "object"
+        },
+        "calisthenicsPlan": {
+          "type": "object"
+        },
+        "progress": {
+          "type": "array"
+        }
+      },
+      "required": ["userId"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles with their roles for RBAC."
+    },
+    "students/{studentId}": {
+      "schema": { "$ref": "#/entities/StudentData" },
+      "description": "Stores detailed forms, plans and assessments for alunos. studentId = userId."
+    }
+  }
+}

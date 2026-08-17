@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive Validations
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { 
+      // Verify if current user is an admin by checking their role in the DB
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function existing() { return resource.data; }
+    function incoming() { return request.resource.data; }
+    
+    function isValidId(id) { 
+        return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    // Role verification
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      function isUserValid(data) {
+        return data.keys().hasAll(['role', 'name', 'email', 'createdAt']) &&
+               data.role in ['admin', 'personal', 'aluno'] &&
+               data.name is string && data.name.size() <= 100 &&
+               data.email is string && data.email.size() <= 100 &&
+               data.createdAt is timestamp;
+      }
+
+      function isUserUpdateValid(data) {
+        return data.role in ['admin', 'personal', 'aluno'] &&
+               data.name is string && data.name.size() <= 100 &&
+               data.email is string && data.email.size() <= 100;
+      }
+      
+      // Personal can read their own alunos
+      allow get: if isSignedIn() && isValidId(userId) && (isAdmin() || isOwner(userId) || (existing().role == 'aluno' && existing().personalId == request.auth.uid));
+      // Personal can list their own alunos
+      allow list: if isSignedIn() && (isAdmin() || (existing().role == 'aluno' && existing().personalId == request.auth.uid));
+
+      // Admin creates users
+      allow create: if isSignedIn() && isValidId(userId) && isAdmin() && isUserValid(incoming());
+      
+      // Admin updates any user. 
+      // Em tese, o usuario dono pode alterar nome, etc. mas a prop de role deve estar protegida
+      allow update: if isSignedIn() && isValidId(userId) && (
+        isAdmin() ||
+        (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'gymId']))
+      );
+      
+      allow delete: if isSignedIn() && isValidId(userId) && isAdmin();
+    }
+
+    match /students/{studentId} {
+      function isStudentValid(data) {
+        return data.keys().hasAll(['userId']) && data.userId == request.auth.uid || true;
+      }
+      
+      // Aluno can read own plans. Personal can read/write plans for their students.
+      function isStudentOwner() {
+        return request.auth.uid == studentId;
+      }
+      function isStudentPersonal() {
+        // checks if the target student is owned by the requestor (personal)
+        return get(/databases/$(database)/documents/users/$(studentId)).data.personalId == request.auth.uid;
+      }
+
+      allow get: if isSignedIn() && isValidId(studentId) && (isAdmin() || isStudentOwner() || isStudentPersonal());
+      // List rules: Since we can't do get() in allow list for all documents efficiently,
+      // For personal, they will just fetch specific student Docs, not query the collection.
+      allow list: if isSignedIn() && (isAdmin() || isStudentOwner());
+
+      allow create: if isSignedIn() && isValidId(studentId) && (isAdmin() || isStudentPersonal());
+      
+      allow update: if isSignedIn() && isValidId(studentId) && (isAdmin() || isStudentPersonal() || (isStudentOwner() && incoming().diff(existing()).affectedKeys().hasOnly(['progress', 'weight', 'height'])));
+      allow delete: if isSignedIn() && isValidId(studentId) && isAdmin();
+    }
+  }
+}
